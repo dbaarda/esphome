@@ -1,4 +1,5 @@
 #include "bme280.h"
+#include "esphome/core/hal.h"
 #include "esphome/core/log.h"
 
 namespace esphome {
@@ -144,6 +145,7 @@ void BME280Component::setup() {
     return;
   }
 }
+
 void BME280Component::dump_config() {
   ESP_LOGCONFIG(TAG, "BME280:");
   LOG_I2C_DEVICE(this);
@@ -163,11 +165,33 @@ void BME280Component::dump_config() {
 
   LOG_SENSOR("  ", "Temperature", this->temperature_sensor_);
   ESP_LOGCONFIG(TAG, "    Oversampling: %s", oversampling_to_str(this->temperature_oversampling_));
+  ESP_LOGCONFIG(TAG, "    Calibration: t1=%d, t2=%d, t3=%d",
+		this->calibration_.t1,
+		this->calibration_.t2,
+		this->calibration_.t3);
   LOG_SENSOR("  ", "Pressure", this->pressure_sensor_);
   ESP_LOGCONFIG(TAG, "    Oversampling: %s", oversampling_to_str(this->pressure_oversampling_));
+  ESP_LOGCONFIG(TAG, "    Calibration: p1=%d, p2=%d, p3=%d, p4=%d, p5=%d, p6=%d, p7=%d, p8=%d, p9=%d",
+           this->calibration_.p1,
+           this->calibration_.p2,
+           this->calibration_.p3,
+           this->calibration_.p4,
+           this->calibration_.p5,
+           this->calibration_.p6,
+           this->calibration_.p7,
+           this->calibration_.p8,
+           this->calibration_.p9);
   LOG_SENSOR("  ", "Humidity", this->humidity_sensor_);
   ESP_LOGCONFIG(TAG, "    Oversampling: %s", oversampling_to_str(this->humidity_oversampling_));
+  ESP_LOGCONFIG(TAG, "    Calibration: h1=%d, h2=%d, h3=%d, h4=%d, h5=%d, h6=%d",
+           this->calibration_.h1,
+           this->calibration_.h2,
+           this->calibration_.h3,
+           this->calibration_.h4,
+           this->calibration_.h5,
+           this->calibration_.h6);
 }
+
 float BME280Component::get_setup_priority() const { return setup_priority::DATA; }
 
 inline uint8_t oversampling_to_time(BME280Oversampling over_sampling) { return (1 << uint8_t(over_sampling)) >> 1; }
@@ -189,13 +213,16 @@ void BME280Component::update() {
   meas_time += 2.3f * oversampling_to_time(this->pressure_oversampling_) + 0.575f;
   meas_time += 2.3f * oversampling_to_time(this->humidity_oversampling_) + 0.575f;
 
+  ESP_LOGV(TAG, "Getting conversion result timeout=%fms after millis=%d", meas_time, millis());
   this->set_timeout("data", uint32_t(ceilf(meas_time)), [this]() {
     uint8_t data[8];
+    ESP_LOGV(TAG, "Reading conversion result at millis=%d", millis());
     if (!this->read_bytes(BME280_REGISTER_MEASUREMENTS, data, 8)) {
       ESP_LOGW(TAG, "Error reading registers.");
       this->status_set_warning();
       return;
     }
+    ESP_LOGV(TAG, "Read completed at millis=%d", millis());
     int32_t t_fine = 0;
     float temperature = this->read_temperature_(data, &t_fine);
     if (std::isnan(temperature)) {
@@ -216,9 +243,11 @@ void BME280Component::update() {
     this->status_clear_warning();
   });
 }
+
 float BME280Component::read_temperature_(const uint8_t *data, int32_t *t_fine) {
   int32_t adc = ((data[3] & 0xFF) << 16) | ((data[4] & 0xFF) << 8) | (data[5] & 0xFF);
   adc >>= 4;
+  ESP_LOGD(TAG, "RawT adc=%d", adc);
   if (adc == 0x80000) {
     // temperature was disabled
     return NAN;
@@ -239,6 +268,7 @@ float BME280Component::read_temperature_(const uint8_t *data, int32_t *t_fine) {
 float BME280Component::read_pressure_(const uint8_t *data, int32_t t_fine) {
   int32_t adc = ((data[0] & 0xFF) << 16) | ((data[1] & 0xFF) << 8) | (data[2] & 0xFF);
   adc >>= 4;
+  ESP_LOGD(TAG, "RawP adc=%d, tfine=%d", adc, t_fine);
   if (adc == 0x80000) {
     // pressure was disabled
     return NAN;
@@ -275,6 +305,7 @@ float BME280Component::read_pressure_(const uint8_t *data, int32_t t_fine) {
 
 float BME280Component::read_humidity_(const uint8_t *data, int32_t t_fine) {
   uint16_t raw_adc = ((data[6] & 0xFF) << 8) | (data[7] & 0xFF);
+  ESP_LOGD(TAG, "RawH adc=%d, tfine=%d", raw_adc, t_fine);
   if (raw_adc == 0x8000)
     return NAN;
 
@@ -300,26 +331,32 @@ float BME280Component::read_humidity_(const uint8_t *data, int32_t t_fine) {
 
   return h / 1024.0f;
 }
+
 void BME280Component::set_temperature_oversampling(BME280Oversampling temperature_over_sampling) {
   this->temperature_oversampling_ = temperature_over_sampling;
 }
+
 void BME280Component::set_pressure_oversampling(BME280Oversampling pressure_over_sampling) {
   this->pressure_oversampling_ = pressure_over_sampling;
 }
+
 void BME280Component::set_humidity_oversampling(BME280Oversampling humidity_over_sampling) {
   this->humidity_oversampling_ = humidity_over_sampling;
 }
+
 void BME280Component::set_iir_filter(BME280IIRFilter iir_filter) { this->iir_filter_ = iir_filter; }
 uint8_t BME280Component::read_u8_(uint8_t a_register) {
   uint8_t data = 0;
   this->read_byte(a_register, &data);
   return data;
 }
+
 uint16_t BME280Component::read_u16_le_(uint8_t a_register) {
   uint16_t data = 0;
   this->read_byte_16(a_register, &data);
   return (data >> 8) | (data << 8);
 }
+
 int16_t BME280Component::read_s16_le_(uint8_t a_register) { return this->read_u16_le_(a_register); }
 
 }  // namespace bme280
