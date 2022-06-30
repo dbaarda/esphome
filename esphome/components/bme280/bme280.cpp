@@ -97,6 +97,7 @@ void BME280Component::setup() {
     this->mark_failed();
     return;
   }
+  this->log_status_reg();
 
   // Read calibration
   this->calibration_.t1 = read_u16_le_(BME280_REGISTER_DIG_T1);
@@ -196,7 +197,19 @@ float BME280Component::get_setup_priority() const { return setup_priority::DATA;
 
 inline uint8_t oversampling_to_time(BME280Oversampling over_sampling) { return (1 << uint8_t(over_sampling)) >> 1; }
 
+void BME280Component::log_status_reg() {
+  uint8_t status;
+
+  if (!this->read_byte(BME280_REGISTER_STATUS, &status)) {
+    ESP_LOGW(TAG, "Error reading status register.");
+    this->status_set_warning();
+    return;
+  }
+  ESP_LOGV(TAG, "status=%x", status);
+}
+
 void BME280Component::update() {
+  this->log_status_reg();
   // Enable sensor
   ESP_LOGV(TAG, "Sending conversion request...");
   uint8_t meas_value = 0;
@@ -207,6 +220,7 @@ void BME280Component::update() {
     this->status_set_warning();
     return;
   }
+  this->log_status_reg();
 
   float meas_time = 1.5f;
   meas_time += 2.3f * oversampling_to_time(this->temperature_oversampling_);
@@ -215,6 +229,7 @@ void BME280Component::update() {
 
   ESP_LOGV(TAG, "Getting conversion result timeout=%fms after millis=%d", meas_time, millis());
   this->set_timeout("data", uint32_t(ceilf(meas_time)), [this]() {
+    this->log_status_reg();
     uint8_t data[8];
     ESP_LOGV(TAG, "Reading conversion result at millis=%d", millis());
     if (!this->read_bytes(BME280_REGISTER_MEASUREMENTS, data, 8)) {
@@ -223,6 +238,7 @@ void BME280Component::update() {
       return;
     }
     ESP_LOGV(TAG, "Read completed at millis=%d", millis());
+    this->log_status_reg();
     int32_t t_fine = 0;
     float temperature = this->read_temperature_(data, &t_fine);
     if (std::isnan(temperature)) {

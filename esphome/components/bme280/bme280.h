@@ -81,6 +81,7 @@ class BME280Component : public PollingComponent, public i2c::I2CDevice {
   void update() override;
 
  protected:
+  void log_status_reg();
   /// Read the temperature value and store the calculated ambient temperature in t_fine.
   float read_temperature_(const uint8_t *data, int32_t *t_fine);
   /// Read the pressure value in hPa using the provided t_fine value.
